@@ -79,76 +79,222 @@ class _CalendarPageState extends State<CalendarPage> {
     final descriptionController = TextEditingController(
       text: event?.description ?? '',
     );
-    DateTime selectedDate = event?.date ?? _selectedDay ?? DateTime.now();
+    // 固定使用当前选中的日期，不可更改
+    final DateTime selectedDate = _selectedDay ?? _focusedDay;
+
+    // 初始化时间
+    TimeOfDay startTime = event != null
+        ? TimeOfDay.fromDateTime(event.startTime)
+        : TimeOfDay.fromDateTime(DateTime.now());
+    TimeOfDay endTime = event != null
+        ? TimeOfDay.fromDateTime(event.endTime)
+        : TimeOfDay.fromDateTime(DateTime.now().add(const Duration(hours: 1)));
+
     final _formKey = GlobalKey<FormState>();
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(isEditing ? '编辑日程' : '添加日程'),
-        content: SingleChildScrollView(
-          child: Form(
-            key: _formKey,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextFormField(
-                  controller: titleController,
-                  decoration: const InputDecoration(
-                    labelText: '标题',
-                    border: OutlineInputBorder(),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: Text(isEditing ? '编辑日程' : '添加日程'),
+          content: SingleChildScrollView(
+            child: Form(
+              key: _formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextFormField(
+                    controller: titleController,
+                    decoration: const InputDecoration(
+                      labelText: '标题',
+                      border: OutlineInputBorder(),
+                    ),
+                    validator: (value) {
+                      if (value == null || value.isEmpty) {
+                        return '标题不能为空';
+                      }
+                      return null;
+                    },
                   ),
-                  // 添加标题非空验证逻辑
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return '标题不能为空';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: descriptionController,
-                  decoration: const InputDecoration(
-                    labelText: '描述',
-                    border: OutlineInputBorder(),
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: descriptionController,
+                    decoration: const InputDecoration(
+                      labelText: '描述',
+                      border: OutlineInputBorder(),
+                    ),
+                    maxLines: 3,
                   ),
-                  maxLines: 3,
-                ),
-                const SizedBox(height: 16),
-                ListTile(
-                  title: const Text('日期'),
-                  subtitle: Text(DateFormat('yyyy-MM-dd').format(selectedDate)),
-                ),
-              ],
+                  const SizedBox(height: 16),
+                  // 显示固定日期，不可点击
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[100],
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.grey[300]!),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.calendar_today, color: Colors.grey),
+                        const SizedBox(width: 12),
+                        Text(
+                          DateFormat('yyyy年MM月dd日').format(selectedDate),
+                          style: const TextStyle(fontSize: 16),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  InkWell(
+                    onTap: () async {
+                      final picked = await showTimePicker(
+                        context: context,
+                        initialTime: startTime,
+                        initialEntryMode: TimePickerEntryMode.input,
+                        builder: (context, child) {
+                          return MediaQuery(
+                            data: MediaQuery.of(
+                              context,
+                            ).copyWith(alwaysUse24HourFormat: true),
+                            child: child!,
+                          );
+                        },
+                      );
+                      if (picked != null) {
+                        setState(() {
+                          startTime = picked;
+                          // 如果结束时间早于开始时间，自动调整
+                          final startMinutes =
+                              startTime.hour * 60 + startTime.minute;
+                          final endMinutes = endTime.hour * 60 + endTime.minute;
+                          if (endMinutes <= startMinutes) {
+                            endTime = TimeOfDay(
+                              hour: (startTime.hour + 1) % 24,
+                              minute: startTime.minute,
+                            );
+                          }
+                        });
+                      }
+                    },
+                    child: InputDecorator(
+                      decoration: const InputDecoration(
+                        labelText: '开始时间',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.access_time),
+                      ),
+                      child: Text(
+                        startTime.format(context),
+                        style: const TextStyle(fontSize: 16),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  FormField<TimeOfDay>(
+                    initialValue: endTime,
+                    validator: (value) {
+                      if (value == null) return null;
+
+                      final startMinutes =
+                          startTime.hour * 60 + startTime.minute;
+                      final endMinutes = value.hour * 60 + value.minute;
+
+                      if (endMinutes <= startMinutes) {
+                        return '结束时间必须晚于开始时间';
+                      }
+                      return null;
+                    },
+                    builder: (FormFieldState<TimeOfDay> field) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          InkWell(
+                            onTap: () async {
+                              final picked = await showTimePicker(
+                                context: context,
+                                initialTime: endTime,
+                                initialEntryMode: TimePickerEntryMode.input,
+                                builder: (context, child) {
+                                  return MediaQuery(
+                                    data: MediaQuery.of(
+                                      context,
+                                    ).copyWith(alwaysUse24HourFormat: true),
+                                    child: child!,
+                                  );
+                                },
+                              );
+                              if (picked != null) {
+                                setState(() {
+                                  endTime = picked;
+                                  field.didChange(picked);
+                                });
+                              }
+                            },
+                            child: InputDecorator(
+                              decoration: InputDecoration(
+                                labelText: '结束时间',
+                                border: const OutlineInputBorder(),
+                                prefixIcon: const Icon(Icons.access_time),
+                                errorText: field.errorText,
+                              ),
+                              child: Text(
+                                endTime.format(context),
+                                style: const TextStyle(fontSize: 16),
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ],
+              ),
             ),
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                if (_formKey.currentState!.validate()) {
+                  final startDateTime = DateTime(
+                    selectedDate.year,
+                    selectedDate.month,
+                    selectedDate.day,
+                    startTime.hour,
+                    startTime.minute,
+                  );
+                  final endDateTime = DateTime(
+                    selectedDate.year,
+                    selectedDate.month,
+                    selectedDate.day,
+                    endTime.hour,
+                    endTime.minute,
+                  );
+
+                  final newEvent = Event(
+                    id:
+                        event?.id ??
+                        DateTime.now().millisecondsSinceEpoch.toString(),
+                    title: titleController.text,
+                    startTime: startDateTime,
+                    endTime: endDateTime,
+                    description: descriptionController.text.isEmpty
+                        ? null
+                        : descriptionController.text,
+                  );
+                  this.setState(() {
+                    _addOrUpdateEvent(newEvent);
+                  });
+                  Navigator.pop(context);
+                }
+              },
+              child: Text(isEditing ? '更新' : '添加'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('取消'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              if (_formKey.currentState!.validate()) {
-                final newEvent = Event(
-                  id:
-                      event?.id ??
-                      DateTime.now().millisecondsSinceEpoch.toString(),
-                  title: titleController.text,
-                  date: selectedDate,
-                  description: descriptionController.text.isEmpty
-                      ? null
-                      : descriptionController.text,
-                );
-                _addOrUpdateEvent(newEvent);
-                Navigator.pop(context);
-              }
-            },
-            child: Text(isEditing ? '更新' : '添加'),
-          ),
-        ],
       ),
     );
   }
@@ -167,7 +313,17 @@ class _CalendarPageState extends State<CalendarPage> {
               children: [
                 const Icon(Icons.calendar_today, size: 20),
                 const SizedBox(width: 8),
-                Text(DateFormat('yyyy年MM月dd日').format(event.date)),
+                Text(DateFormat('yyyy年MM月dd日').format(event.startTime)),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                const Icon(Icons.access_time, size: 20),
+                const SizedBox(width: 8),
+                Text(
+                  '${DateFormat('HH:mm').format(event.startTime)} - ${DateFormat('HH:mm').format(event.endTime)}',
+                ),
               ],
             ),
             if (event.description != null) ...[
@@ -373,6 +529,8 @@ class _CalendarPageState extends State<CalendarPage> {
 
   Widget _buildEventList() {
     final events = _getEventsForDay(_selectedDay ?? _focusedDay);
+    // 按开始时间排序
+    events.sort((a, b) => a.startTime.compareTo(b.startTime));
 
     if (events.isEmpty) {
       return Center(
@@ -398,18 +556,38 @@ class _CalendarPageState extends State<CalendarPage> {
         return Card(
           margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
           child: ListTile(
-            leading: CircleAvatar(child: Text('${index + 1}')),
+            leading: CircleAvatar(
+              child: Text(
+                DateFormat('HH:mm').format(event.startTime).substring(0, 2),
+              ),
+            ),
             title: Text(
               event.title,
               style: const TextStyle(fontWeight: FontWeight.bold),
             ),
-            subtitle: event.description != null
-                ? Text(
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.access_time, size: 14, color: Colors.grey[600]),
+                    const SizedBox(width: 4),
+                    Text(
+                      '${DateFormat('HH:mm').format(event.startTime)} - ${DateFormat('HH:mm').format(event.endTime)}',
+                      style: TextStyle(color: Colors.grey[600]),
+                    ),
+                  ],
+                ),
+                if (event.description != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
                     event.description!,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                  )
-                : null,
+                  ),
+                ],
+              ],
+            ),
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [

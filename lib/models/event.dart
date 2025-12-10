@@ -1,26 +1,33 @@
 class Event {
   final String id;
   final String title;
-  final DateTime date;
+  final DateTime startTime;
+  final DateTime endTime;
   final String? description;
 
   Event({
     required this.id,
     required this.title,
-    required this.date,
+    required this.startTime,
+    required this.endTime,
     this.description,
   });
+
+  // 获取事件的日期（不包含时间）
+  DateTime get date => DateTime(startTime.year, startTime.month, startTime.day);
 
   Event copyWith({
     String? id,
     String? title,
-    DateTime? date,
+    DateTime? startTime,
+    DateTime? endTime,
     String? description,
   }) {
     return Event(
       id: id ?? this.id,
       title: title ?? this.title,
-      date: date ?? this.date,
+      startTime: startTime ?? this.startTime,
+      endTime: endTime ?? this.endTime,
       description: description ?? this.description,
     );
   }
@@ -29,7 +36,8 @@ class Event {
     return {
       'id': id,
       'title': title,
-      'date': date.toIso8601String(),
+      'startTime': startTime.toIso8601String(),
+      'endTime': endTime.toIso8601String(),
       'description': description,
     };
   }
@@ -38,7 +46,8 @@ class Event {
     return Event(
       id: json['id'] as String,
       title: json['title'] as String,
-      date: DateTime.parse(json['date'] as String),
+      startTime: DateTime.parse(json['startTime'] as String),
+      endTime: DateTime.parse(json['endTime'] as String),
       description: json['description'] as String?,
     );
   }
