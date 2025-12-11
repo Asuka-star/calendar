@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:intl/intl.dart';
 import '../models/event.dart';
+import '../database/event_database.dart';
 
 class CalendarPage extends StatefulWidget {
   const CalendarPage({super.key});
@@ -13,6 +14,7 @@ class CalendarPage extends StatefulWidget {
 enum ViewMode { month, week, day }
 
 class _CalendarPageState extends State<CalendarPage> {
+  late EventDatabase _database;
   CalendarFormat _calendarFormat = CalendarFormat.month;
   ViewMode _viewMode = ViewMode.month;
   DateTime _focusedDay = DateTime.now();
@@ -23,6 +25,27 @@ class _CalendarPageState extends State<CalendarPage> {
   void initState() {
     super.initState();
     _selectedDay = _focusedDay;
+    _database = EventDatabase();
+    _loadEvents();
+  }
+
+  // 从数据库加载事件
+  void _loadEvents() async {
+    final events = await _database.getAllEvents();
+    setState(() {
+      _events.clear();
+      for (var event in events) {
+        final normalizedDate = DateTime(
+          event.startTime.year,
+          event.startTime.month,
+          event.startTime.day,
+        );
+        if (_events[normalizedDate] == null) {
+          _events[normalizedDate] = [];
+        }
+        _events[normalizedDate]!.add(event);
+      }
+    });
   }
 
   // 获取指定日期的事件列表
@@ -32,12 +55,15 @@ class _CalendarPageState extends State<CalendarPage> {
   }
 
   // 添加或更新事件
-  void _addOrUpdateEvent(Event event) {
+  void _addOrUpdateEvent(Event event) async {
+    // 保存到数据库
+    await _database.insertOrUpdateEvent(event);
+
     setState(() {
       final normalizedDate = DateTime(
-        event.date.year,
-        event.date.month,
-        event.date.day,
+        event.startTime.year,
+        event.startTime.month,
+        event.startTime.day,
       );
 
       if (_events[normalizedDate] == null) {
@@ -57,12 +83,15 @@ class _CalendarPageState extends State<CalendarPage> {
   }
 
   // 删除事件
-  void _deleteEvent(Event event) {
+  void _deleteEvent(Event event) async {
+    // 从数据库删除
+    await _database.deleteEvent(event.id);
+
     setState(() {
       final normalizedDate = DateTime(
-        event.date.year,
-        event.date.month,
-        event.date.day,
+        event.startTime.year,
+        event.startTime.month,
+        event.startTime.day,
       );
 
       _events[normalizedDate]?.removeWhere((e) => e.id == event.id);
