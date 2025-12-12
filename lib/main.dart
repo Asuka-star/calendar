@@ -1,10 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'pages/calendar_page.dart';
+import 'services/notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await initializeDateFormatting('zh_CN', null);
+
+  try {
+    await initializeDateFormatting('zh_CN', null);
+    await NotificationService().init();
+  } catch (e) {
+    print('初始化错误: $e');
+  }
+
   runApp(const MyApp());
 }
 

@@ -9,6 +9,7 @@ class EventDatabase {
   static const String columnStartTime = 'start_time';
   static const String columnEndTime = 'end_time';
   static const String columnDescription = 'description';
+  static const String columnReminderMinutes = 'reminder_minutes';
 
   static Database? _database;
 
@@ -22,7 +23,12 @@ class EventDatabase {
   // 初始化数据库
   Future<Database> _initDatabase() async {
     String path = join(await getDatabasesPath(), 'calendar.db');
-    return await openDatabase(path, version: 1, onCreate: _createDb);
+    return await openDatabase(
+      path,
+      version: 2,
+      onCreate: _createDb,
+      onUpgrade: _upgradeDb,
+    );
   }
 
   // 创建数据表
@@ -33,9 +39,20 @@ class EventDatabase {
         $columnTitle TEXT NOT NULL,
         $columnStartTime TEXT NOT NULL,
         $columnEndTime TEXT NOT NULL,
-        $columnDescription TEXT
+        $columnDescription TEXT,
+        $columnReminderMinutes INTEGER
       )
     ''');
+  }
+
+  // 数据库升级
+  Future<void> _upgradeDb(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      // 添加 reminder_minutes 字段
+      await db.execute(
+        'ALTER TABLE $tableName ADD COLUMN $columnReminderMinutes INTEGER',
+      );
+    }
   }
 
   // 插入或更新事件
@@ -47,6 +64,7 @@ class EventDatabase {
       columnStartTime: event.startTime.toIso8601String(),
       columnEndTime: event.endTime.toIso8601String(),
       columnDescription: event.description,
+      columnReminderMinutes: event.reminderMinutes,
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
@@ -67,6 +85,7 @@ class EventDatabase {
         startTime: DateTime.parse(maps[i][columnStartTime] as String),
         endTime: DateTime.parse(maps[i][columnEndTime] as String),
         description: maps[i][columnDescription] as String?,
+        reminderMinutes: maps[i][columnReminderMinutes] as int?,
       );
     });
   }
@@ -91,6 +110,7 @@ class EventDatabase {
         startTime: DateTime.parse(maps[i][columnStartTime] as String),
         endTime: DateTime.parse(maps[i][columnEndTime] as String),
         description: maps[i][columnDescription] as String?,
+        reminderMinutes: maps[i][columnReminderMinutes] as int?,
       );
     });
   }

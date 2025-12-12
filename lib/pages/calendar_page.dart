@@ -3,6 +3,7 @@ import 'package:table_calendar/table_calendar.dart';
 import 'package:intl/intl.dart';
 import '../models/event.dart';
 import '../database/event_database.dart';
+import '../services/notification_service.dart';
 
 class CalendarPage extends StatefulWidget {
   const CalendarPage({super.key});
@@ -46,6 +47,24 @@ class _CalendarPageState extends State<CalendarPage> {
         _events[normalizedDate]!.add(event);
       }
     });
+
+    // 在 setState 外部重新安排所有通知
+    for (var event in events) {
+      if (event.reminderMinutes != null && event.reminderMinutes! > 0) {
+        final reminderTime = event.startTime.subtract(
+          Duration(minutes: event.reminderMinutes!),
+        );
+        // 只在时间未过期时安排
+        if (reminderTime.isAfter(DateTime.now())) {
+          await NotificationService().scheduleNotification(
+            id: event.id.hashCode,
+            title: event.title,
+            body: '日程即将开始',
+            scheduledDateTime: reminderTime,
+          );
+        }
+      }
+    }
   }
 
   // 获取指定日期的事件列表
@@ -55,10 +74,8 @@ class _CalendarPageState extends State<CalendarPage> {
   }
 
   // 添加或更新事件
-  void _addOrUpdateEvent(Event event) async {
-    // 保存到数据库
-    await _database.insertOrUpdateEvent(event);
-
+  Future<void> _addOrUpdateEvent(Event event) async {
+    // 立即更新 UI（乐观更新）
     setState(() {
       final normalizedDate = DateTime(
         event.startTime.year,
@@ -80,13 +97,57 @@ class _CalendarPageState extends State<CalendarPage> {
         _events[normalizedDate]!.add(event);
       }
     });
+
+    // 后台异步保存到数据库和处理通知
+    _saveEventInBackground(event);
+  }
+
+  // 后台保存事件
+  Future<void> _saveEventInBackground(Event event) async {
+    try {
+      // 保存到数据库
+      await _database.insertOrUpdateEvent(event);
+
+      // 先取消旧的通知（如果存在）
+      await NotificationService().cancelNotification(event.id.hashCode);
+
+      // 如果设置了新的提醒时间，重新调度通知
+      if (event.reminderMinutes != null && event.reminderMinutes! > 0) {
+        final reminderTime = event.startTime.subtract(
+          Duration(minutes: event.reminderMinutes!),
+        );
+
+        // 只在未过期时调度
+        if (reminderTime.isAfter(DateTime.now())) {
+          await NotificationService().scheduleNotification(
+            id: event.id.hashCode,
+            title: event.title,
+            body: '日程即将开始',
+            scheduledDateTime: reminderTime,
+          );
+        }
+      }
+    } catch (e) {
+      // 如果保存失败，可以选择回滚 UI 或显示错误提示
+    }
+  }
+
+  // 获取提醒时间的文本描述
+  String _getReminderText(int minutes) {
+    if (minutes < 60) {
+      return '提前 $minutes 分钟提醒';
+    } else if (minutes < 1440) {
+      final hours = minutes ~/ 60;
+      return '提前 $hours 小时提醒';
+    } else {
+      final days = minutes ~/ 1440;
+      return '提前 $days 天提醒';
+    }
   }
 
   // 删除事件
-  void _deleteEvent(Event event) async {
-    // 从数据库删除
-    await _database.deleteEvent(event.id);
-
+  void _deleteEvent(Event event) {
+    // 立即更新 UI
     setState(() {
       final normalizedDate = DateTime(
         event.startTime.year,
@@ -99,6 +160,22 @@ class _CalendarPageState extends State<CalendarPage> {
         _events.remove(normalizedDate);
       }
     });
+
+    // 后台异步删除
+    _deleteEventInBackground(event);
+  }
+
+  // 后台删除事件
+  Future<void> _deleteEventInBackground(Event event) async {
+    try {
+      // 从数据库删除
+      await _database.deleteEvent(event.id);
+
+      // 取消通知
+      NotificationService().cancelNotification(event.id.hashCode);
+    } catch (e) {
+      // 删除失败
+    }
   }
 
   // 显示添加/编辑事件对话框
@@ -119,10 +196,17 @@ class _CalendarPageState extends State<CalendarPage> {
         ? TimeOfDay.fromDateTime(event.endTime)
         : TimeOfDay.fromDateTime(DateTime.now().add(const Duration(hours: 1)));
 
+    // 初始化提醒时间
+    int? reminderMinutes = event?.reminderMinutes;
+
+    // 防止重复提交的标志
+    bool isSubmitting = false;
+
     final _formKey = GlobalKey<FormState>();
 
     showDialog(
       context: context,
+      barrierDismissible: false, // 防止点击外部关闭
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
           title: Text(isEditing ? '编辑日程' : '添加日程'),
@@ -276,51 +360,134 @@ class _CalendarPageState extends State<CalendarPage> {
                       );
                     },
                   ),
+                  const SizedBox(height: 16),
+                  // 提醒设置
+                  DropdownButtonFormField<int?>(
+                    value: reminderMinutes,
+                    decoration: const InputDecoration(
+                      labelText: '提醒',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.notifications),
+                    ),
+                    items: [
+                      const DropdownMenuItem<int?>(
+                        value: null,
+                        child: Text('不提醒'),
+                      ),
+                      const DropdownMenuItem<int>(
+                        value: 1,
+                        child: Text('事件前1分钟'),
+                      ),
+                      const DropdownMenuItem<int>(
+                        value: 5,
+                        child: Text('事件前5分钟'),
+                      ),
+                      const DropdownMenuItem<int>(
+                        value: 10,
+                        child: Text('事件前10分钟'),
+                      ),
+                      const DropdownMenuItem<int>(
+                        value: 15,
+                        child: Text('事件前15分钟'),
+                      ),
+                      const DropdownMenuItem<int>(
+                        value: 30,
+                        child: Text('事件前30分钟'),
+                      ),
+                      const DropdownMenuItem<int>(
+                        value: 60,
+                        child: Text('事件前1小时'),
+                      ),
+                      const DropdownMenuItem<int>(
+                        value: 1440,
+                        child: Text('事件前1天'),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      setState(() {
+                        reminderMinutes = value;
+                      });
+                    },
+                  ),
                 ],
               ),
             ),
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: isSubmitting ? null : () => Navigator.pop(context),
               child: const Text('取消'),
             ),
             ElevatedButton(
-              onPressed: () {
-                if (_formKey.currentState!.validate()) {
-                  final startDateTime = DateTime(
-                    selectedDate.year,
-                    selectedDate.month,
-                    selectedDate.day,
-                    startTime.hour,
-                    startTime.minute,
-                  );
-                  final endDateTime = DateTime(
-                    selectedDate.year,
-                    selectedDate.month,
-                    selectedDate.day,
-                    endTime.hour,
-                    endTime.minute,
-                  );
+              onPressed: isSubmitting
+                  ? null
+                  : () async {
+                      if (_formKey.currentState!.validate()) {
+                        // 防止重复提交
+                        setState(() {
+                          isSubmitting = true;
+                        });
 
-                  final newEvent = Event(
-                    id:
-                        event?.id ??
-                        DateTime.now().millisecondsSinceEpoch.toString(),
-                    title: titleController.text,
-                    startTime: startDateTime,
-                    endTime: endDateTime,
-                    description: descriptionController.text.isEmpty
-                        ? null
-                        : descriptionController.text,
-                  );
-                  this.setState(() {
-                    _addOrUpdateEvent(newEvent);
-                  });
-                  Navigator.pop(context);
-                }
-              },
-              child: Text(isEditing ? '更新' : '添加'),
+                        try {
+                          final startDateTime = DateTime(
+                            selectedDate.year,
+                            selectedDate.month,
+                            selectedDate.day,
+                            startTime.hour,
+                            startTime.minute,
+                          );
+                          final endDateTime = DateTime(
+                            selectedDate.year,
+                            selectedDate.month,
+                            selectedDate.day,
+                            endTime.hour,
+                            endTime.minute,
+                          );
+
+                          final newEvent = Event(
+                            id:
+                                event?.id ??
+                                DateTime.now().millisecondsSinceEpoch
+                                    .toString(),
+                            title: titleController.text,
+                            startTime: startDateTime,
+                            endTime: endDateTime,
+                            description: descriptionController.text.isEmpty
+                                ? null
+                                : descriptionController.text,
+                            reminderMinutes: reminderMinutes,
+                          );
+
+                          // 添加事件
+                          await _addOrUpdateEvent(newEvent);
+
+                          // 关闭对话框
+                          if (context.mounted) {
+                            Navigator.pop(context);
+                          }
+                        } catch (e) {
+                          // 如果出错，恢复按钮状态并显示错误
+                          setState(() {
+                            isSubmitting = false;
+                          });
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(
+                              context,
+                            ).showSnackBar(SnackBar(content: Text('保存失败: $e')));
+                          }
+                        }
+                      }
+                    },
+              child: isSubmitting
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
+                    )
+                  : Text(isEditing ? '更新' : '添加'),
             ),
           ],
         ),
@@ -355,6 +522,17 @@ class _CalendarPageState extends State<CalendarPage> {
                 ),
               ],
             ),
+            if (event.reminderMinutes != null &&
+                event.reminderMinutes! > 0) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  const Icon(Icons.notifications_active, size: 20),
+                  const SizedBox(width: 8),
+                  Text(_getReminderText(event.reminderMinutes!)),
+                ],
+              ),
+            ],
             if (event.description != null) ...[
               const SizedBox(height: 16),
               Text(event.description!, style: const TextStyle(fontSize: 16)),
@@ -564,13 +742,14 @@ class _CalendarPageState extends State<CalendarPage> {
     if (events.isEmpty) {
       return Center(
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.event_busy, size: 64, color: Colors.grey[400]),
-            const SizedBox(height: 16),
+            Icon(Icons.event_busy, size: 48, color: Colors.grey[400]),
+            const SizedBox(height: 12),
             Text(
               '当天没有日程',
-              style: TextStyle(fontSize: 18, color: Colors.grey[600]),
+              style: TextStyle(fontSize: 16, color: Colors.grey[600]),
             ),
           ],
         ),

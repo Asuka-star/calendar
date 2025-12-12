@@ -4,6 +4,7 @@ class Event {
   final DateTime startTime;
   final DateTime endTime;
   final String? description;
+  final int? reminderMinutes; // 提醒时间：开始前几分钟
 
   Event({
     required this.id,
@@ -11,6 +12,7 @@ class Event {
     required this.startTime,
     required this.endTime,
     this.description,
+    this.reminderMinutes,
   });
 
   // 获取事件的日期（不包含时间）
@@ -22,6 +24,7 @@ class Event {
     DateTime? startTime,
     DateTime? endTime,
     String? description,
+    int? reminderMinutes,
   }) {
     return Event(
       id: id ?? this.id,
@@ -29,6 +32,7 @@ class Event {
       startTime: startTime ?? this.startTime,
       endTime: endTime ?? this.endTime,
       description: description ?? this.description,
+      reminderMinutes: reminderMinutes ?? this.reminderMinutes,
     );
   }
 
@@ -39,6 +43,7 @@ class Event {
       'startTime': startTime.toIso8601String(),
       'endTime': endTime.toIso8601String(),
       'description': description,
+      'reminderMinutes': reminderMinutes,
     };
   }
 
@@ -49,6 +54,7 @@ class Event {
       startTime: DateTime.parse(json['startTime'] as String),
       endTime: DateTime.parse(json['endTime'] as String),
       description: json['description'] as String?,
+      reminderMinutes: json['reminderMinutes'] as int?,
     );
   }
 }
