@@ -640,6 +640,7 @@ class _CalendarPageState extends State<CalendarPage> {
         children: [
           if (_viewMode != ViewMode.day)
             TableCalendar(
+              locale: 'zh_CN',
               firstDay: DateTime.utc(2000, 1, 1),
               lastDay: DateTime.utc(2050, 12, 31),
               focusedDay: _focusedDay,
@@ -647,16 +648,19 @@ class _CalendarPageState extends State<CalendarPage> {
               selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
               eventLoader: _getEventsForDay,
               startingDayOfWeek: StartingDayOfWeek.monday,
-              calendarStyle: const CalendarStyle(
-                todayDecoration: BoxDecoration(
+              calendarStyle: CalendarStyle(
+                todayDecoration: const BoxDecoration(
                   color: Colors.blue,
                   shape: BoxShape.circle,
                 ),
-                selectedDecoration: BoxDecoration(
+                selectedDecoration: const BoxDecoration(
                   color: Colors.deepPurple,
                   shape: BoxShape.circle,
                 ),
                 markersMaxCount: 0,
+                cellMargin: const EdgeInsets.all(4),
+                cellPadding: const EdgeInsets.symmetric(vertical: 8),
+                rowDecoration: BoxDecoration(color: Colors.transparent),
               ),
               headerStyle: const HeaderStyle(
                 formatButtonVisible: false,
@@ -716,51 +720,64 @@ class _CalendarPageState extends State<CalendarPage> {
       textColor = Colors.white;
     }
 
-    return Container(
-      margin: const EdgeInsets.all(4),
-      decoration: BoxDecoration(color: backgroundColor, shape: BoxShape.circle),
-      child: Stack(
-        children: [
-          Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  '${day.day}',
-                  style: TextStyle(
-                    color: textColor ?? Colors.black87,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500,
+    return Tooltip(
+      message: lunarText.length > 4 ? lunarText : '',
+      waitDuration: const Duration(milliseconds: 500),
+      child: Container(
+        margin: const EdgeInsets.all(2),
+        decoration: BoxDecoration(
+          color: backgroundColor,
+          shape: BoxShape.circle,
+        ),
+        child: Stack(
+          children: [
+            Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    '${day.day}',
+                    style: TextStyle(
+                      color: textColor ?? Colors.black87,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  lunarText,
-                  style: TextStyle(
-                    color: textColor?.withAlpha(200) ?? Colors.deepOrange[400],
-                    fontSize: 10,
-                    fontWeight: FontWeight.w400,
+                  const SizedBox(height: 2),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 2),
+                    child: Text(
+                      lunarText,
+                      style: TextStyle(
+                        color:
+                            textColor?.withAlpha(200) ?? Colors.deepOrange[400],
+                        fontSize: lunarText.length > 4 ? 9 : 10,
+                        fontWeight: FontWeight.w400,
+                        height: 1.0,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                    ),
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
-          ),
-          if (hasEvents)
-            Positioned(
-              right: 8,
-              top: 8,
-              child: Container(
-                width: 6,
-                height: 6,
-                decoration: BoxDecoration(
-                  color: textColor ?? Colors.red,
-                  shape: BoxShape.circle,
-                ),
+                ],
               ),
             ),
-        ],
+            if (hasEvents)
+              Positioned(
+                right: 6,
+                top: 6,
+                child: Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: textColor ?? Colors.red,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
