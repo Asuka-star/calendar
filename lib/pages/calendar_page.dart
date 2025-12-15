@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../models/event.dart';
 import '../database/event_database.dart';
 import '../services/notification_service.dart';
+import '../utils/lunar_util.dart';
 
 class CalendarPage extends StatefulWidget {
   const CalendarPage({super.key});
@@ -497,6 +498,8 @@ class _CalendarPageState extends State<CalendarPage> {
 
   // 显示事件详情对话框
   void _showEventDetails(Event event) {
+    final lunarInfo = LunarUtil.getDetailedLunarInfo(event.startTime);
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -509,7 +512,21 @@ class _CalendarPageState extends State<CalendarPage> {
               children: [
                 const Icon(Icons.calendar_today, size: 20),
                 const SizedBox(width: 8),
-                Text(DateFormat('yyyy年MM月dd日').format(event.startTime)),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(DateFormat('yyyy年MM月dd日').format(event.startTime)),
+                      Text(
+                        lunarInfo['农历'] ?? '',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.deepOrange[400],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 12),
@@ -639,14 +656,22 @@ class _CalendarPageState extends State<CalendarPage> {
                   color: Colors.deepPurple,
                   shape: BoxShape.circle,
                 ),
-                markerDecoration: BoxDecoration(
-                  color: Colors.red,
-                  shape: BoxShape.circle,
-                ),
+                markersMaxCount: 0,
               ),
               headerStyle: const HeaderStyle(
                 formatButtonVisible: false,
                 titleCentered: true,
+              ),
+              calendarBuilders: CalendarBuilders(
+                defaultBuilder: (context, day, focusedDay) {
+                  return _buildCalendarCell(day, false, false);
+                },
+                todayBuilder: (context, day, focusedDay) {
+                  return _buildCalendarCell(day, true, false);
+                },
+                selectedBuilder: (context, day, focusedDay) {
+                  return _buildCalendarCell(day, false, true);
+                },
               ),
               onDaySelected: (selectedDay, focusedDay) {
                 setState(() {
@@ -671,6 +696,71 @@ class _CalendarPageState extends State<CalendarPage> {
       floatingActionButton: FloatingActionButton(
         onPressed: () => _showEventDialog(),
         child: const Icon(Icons.add),
+      ),
+    );
+  }
+
+  // 构建日历单元格，显示农历信息
+  Widget _buildCalendarCell(DateTime day, bool isToday, bool isSelected) {
+    final lunarText = LunarUtil.getLunarDisplayText(day);
+    final hasEvents = _getEventsForDay(day).isNotEmpty;
+
+    Color? backgroundColor;
+    Color? textColor;
+
+    if (isSelected) {
+      backgroundColor = Colors.deepPurple;
+      textColor = Colors.white;
+    } else if (isToday) {
+      backgroundColor = Colors.blue;
+      textColor = Colors.white;
+    }
+
+    return Container(
+      margin: const EdgeInsets.all(4),
+      decoration: BoxDecoration(color: backgroundColor, shape: BoxShape.circle),
+      child: Stack(
+        children: [
+          Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  '${day.day}',
+                  style: TextStyle(
+                    color: textColor ?? Colors.black87,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  lunarText,
+                  style: TextStyle(
+                    color: textColor?.withAlpha(200) ?? Colors.deepOrange[400],
+                    fontSize: 10,
+                    fontWeight: FontWeight.w400,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          if (hasEvents)
+            Positioned(
+              right: 8,
+              top: 8,
+              child: Container(
+                width: 6,
+                height: 6,
+                decoration: BoxDecoration(
+                  color: textColor ?? Colors.red,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -713,6 +803,15 @@ class _CalendarPageState extends State<CalendarPage> {
               Text(
                 DateFormat('EEEE', 'zh_CN').format(selectedDate),
                 style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                LunarUtil.getFullLunarDate(selectedDate),
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.deepOrange[400],
+                  fontWeight: FontWeight.w500,
+                ),
               ),
             ],
           ),
