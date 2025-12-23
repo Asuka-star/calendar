@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:intl/intl.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'dart:convert';
 import '../models/event.dart';
 import '../database/event_database.dart';
 import '../services/notification_service.dart';
+import '../services/icalendar_service.dart';
 import '../utils/lunar_util.dart';
 
 class CalendarPage extends StatefulWidget {
@@ -176,6 +182,296 @@ class _CalendarPageState extends State<CalendarPage> {
       NotificationService().cancelNotification(event.id.hashCode);
     } catch (e) {
       // 删除失败
+    }
+  }
+
+  // 请求存储权限
+  Future<bool> _requestStoragePermission() async {
+    if (await Permission.storage.isGranted) {
+      return true;
+    }
+
+    // Android 13+ 使用新的媒体权限
+    if (await Permission.photos.isGranted ||
+        await Permission.videos.isGranted ||
+        await Permission.audio.isGranted) {
+      return true;
+    }
+
+    // 请求权限
+    final status = await Permission.storage.request();
+    if (status.isGranted) {
+      return true;
+    }
+
+    // Android 13+ 尝试请求媒体权限
+    final mediaStatus = await [
+      Permission.photos,
+      Permission.videos,
+      Permission.audio,
+    ].request();
+
+    return mediaStatus.values.any((s) => s.isGranted);
+  }
+
+  // 导出事件为 ICS 文件
+  Future<void> _exportEvents() async {
+    try {
+      final events = await _database.getAllEvents();
+      if (events.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('没有事件可导出')));
+        }
+        return;
+      }
+
+      final icalService = ICalendarService();
+      final icsContent = icalService.exportToICS(events);
+
+      // 获取临时目录
+      final directory = await getTemporaryDirectory();
+      final fileName =
+          'calendar_export_${DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())}.ics';
+      final filePath = '${directory.path}/$fileName';
+
+      // 保存文件
+      await icalService.saveToFile(icsContent, filePath);
+
+      // 分享文件
+      await Share.shareXFiles([XFile(filePath)], text: '日历事件导出');
+
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('已导出 ${events.length} 个事件')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('导出失败: $e')));
+      }
+    }
+  }
+
+  // 导入事件从 ICS 文件
+  Future<void> _importEvents() async {
+    try {
+      // 请求存储权限
+      final status = await _requestStoragePermission();
+      if (!status) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('需要存储权限才能访问文件'),
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+        return;
+      }
+
+      // 显示提示
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('请选择 .ics 日历文件'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+
+      // 选择文件 - 使用 any 类型以提高兼容性
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.any,
+        allowMultiple: false,
+        withData: true, // 同时读取文件数据
+        allowCompression: false,
+      );
+
+      if (result == null || result.files.isEmpty) {
+        return;
+      }
+
+      final file = result.files.first;
+
+      // 检查文件扩展名
+      final fileName = file.name.toLowerCase();
+      if (!fileName.endsWith('.ics') &&
+          !fileName.endsWith('.ical') &&
+          !fileName.endsWith('.ifb') &&
+          !fileName.endsWith('.icalendar')) {
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('请选择 .ics 格式的日历文件')));
+        }
+        return;
+      }
+
+      String icsContent;
+
+      // 优先使用文件数据
+      if (file.bytes != null) {
+        // 使用 UTF-8 解码字节数据
+        icsContent = utf8.decode(file.bytes!);
+      } else if (file.path != null) {
+        // 备用方案：使用文件路径读取（已在 ICalendarService 中使用 UTF-8）
+        final icalService = ICalendarService();
+        icsContent = await icalService.readFromFile(file.path!);
+      } else {
+        throw Exception('无法读取文件内容');
+      }
+
+      // 解析事件
+      final icalService = ICalendarService();
+      final importedEvents = icalService.importFromICS(icsContent);
+
+      if (importedEvents.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('文件中没有有效的事件')));
+        }
+        return;
+      }
+
+      // 保存到数据库
+      for (var event in importedEvents) {
+        await _database.insertOrUpdateEvent(event);
+      }
+
+      // 重新加载事件
+      _loadEvents();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('成功导入 ${importedEvents.length} 个事件')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('导入失败: $e')));
+      }
+    }
+  }
+
+  // 从网络订阅日历
+  Future<void> _subscribeCalendar() async {
+    final urlController = TextEditingController();
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('订阅日历'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('输入 iCalendar 订阅链接（.ics URL）：'),
+              const SizedBox(height: 16),
+              TextField(
+                controller: urlController,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.link),
+                ),
+                keyboardType: TextInputType.url,
+                maxLines: 3,
+                minLines: 1,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('订阅'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || urlController.text.trim().isEmpty) {
+      return;
+    }
+
+    // 显示加载对话框
+    if (mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: Card(
+            child: Padding(
+              padding: EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text('正在订阅...'),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    try {
+      final icalService = ICalendarService();
+      final events = await icalService.subscribeFromURL(
+        urlController.text.trim(),
+      );
+
+      // 关闭加载对话框
+      if (mounted) {
+        Navigator.pop(context);
+      }
+
+      if (events.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('订阅的日历中没有事件')));
+        }
+        return;
+      }
+
+      // 保存到数据库
+      for (var event in events) {
+        await _database.insertOrUpdateEvent(event);
+      }
+
+      // 重新加载事件
+      _loadEvents();
+
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('成功订阅 ${events.length} 个事件')));
+      }
+    } catch (e) {
+      // 关闭加载对话框
+      if (mounted) {
+        Navigator.pop(context);
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('订阅失败: $e')));
+      }
     }
   }
 
@@ -445,19 +741,32 @@ class _CalendarPageState extends State<CalendarPage> {
                             endTime.minute,
                           );
 
-                          final newEvent = Event(
-                            id:
-                                event?.id ??
-                                DateTime.now().millisecondsSinceEpoch
-                                    .toString(),
-                            title: titleController.text,
-                            startTime: startDateTime,
-                            endTime: endDateTime,
-                            description: descriptionController.text.isEmpty
-                                ? null
-                                : descriptionController.text,
-                            reminderMinutes: reminderMinutes,
-                          );
+                          final Event newEvent;
+                          if (event != null) {
+                            // 更新现有事件，使用 copyWith 保留 created 并更新 lastModified 和 sequence
+                            newEvent = event.copyWith(
+                              title: titleController.text,
+                              startTime: startDateTime,
+                              endTime: endDateTime,
+                              description: descriptionController.text.isEmpty
+                                  ? null
+                                  : descriptionController.text,
+                              reminderMinutes: reminderMinutes,
+                            );
+                          } else {
+                            // 创建新事件
+                            newEvent = Event(
+                              id: DateTime.now().millisecondsSinceEpoch
+                                  .toString(),
+                              title: titleController.text,
+                              startTime: startDateTime,
+                              endTime: endDateTime,
+                              description: descriptionController.text.isEmpty
+                                  ? null
+                                  : descriptionController.text,
+                              reminderMinutes: reminderMinutes,
+                            );
+                          }
 
                           // 添加事件
                           await _addOrUpdateEvent(newEvent);
@@ -589,6 +898,56 @@ class _CalendarPageState extends State<CalendarPage> {
         centerTitle: true,
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         actions: [
+          // 导入导出订阅菜单
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            onSelected: (String value) {
+              switch (value) {
+                case 'import':
+                  _importEvents();
+                  break;
+                case 'export':
+                  _exportEvents();
+                  break;
+                case 'subscribe':
+                  _subscribeCalendar();
+                  break;
+              }
+            },
+            itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+              const PopupMenuItem<String>(
+                value: 'import',
+                child: Row(
+                  children: [
+                    Icon(Icons.file_upload),
+                    SizedBox(width: 8),
+                    Text('导入日历'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem<String>(
+                value: 'export',
+                child: Row(
+                  children: [
+                    Icon(Icons.file_download),
+                    SizedBox(width: 8),
+                    Text('导出日历'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem<String>(
+                value: 'subscribe',
+                child: Row(
+                  children: [
+                    Icon(Icons.rss_feed),
+                    SizedBox(width: 8),
+                    Text('订阅日历'),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          // 视图切换菜单
           PopupMenuButton<ViewMode>(
             icon: const Icon(Icons.view_module),
             onSelected: (ViewMode mode) {

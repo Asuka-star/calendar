@@ -10,6 +10,9 @@ class EventDatabase {
   static const String columnEndTime = 'end_time';
   static const String columnDescription = 'description';
   static const String columnReminderMinutes = 'reminder_minutes';
+  static const String columnCreated = 'created';
+  static const String columnLastModified = 'last_modified';
+  static const String columnSequence = 'sequence';
 
   static Database? _database;
 
@@ -25,7 +28,7 @@ class EventDatabase {
     String path = join(await getDatabasesPath(), 'calendar.db');
     return await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: _createDb,
       onUpgrade: _upgradeDb,
     );
@@ -40,7 +43,10 @@ class EventDatabase {
         $columnStartTime TEXT NOT NULL,
         $columnEndTime TEXT NOT NULL,
         $columnDescription TEXT,
-        $columnReminderMinutes INTEGER
+        $columnReminderMinutes INTEGER,
+        $columnCreated TEXT NOT NULL,
+        $columnLastModified TEXT NOT NULL,
+        $columnSequence INTEGER DEFAULT 0
       )
     ''');
   }
@@ -51,6 +57,18 @@ class EventDatabase {
       // 添加 reminder_minutes 字段
       await db.execute(
         'ALTER TABLE $tableName ADD COLUMN $columnReminderMinutes INTEGER',
+      );
+    }
+    if (oldVersion < 3) {
+      // 添加 RFC 5545 标准字段
+      await db.execute(
+        'ALTER TABLE $tableName ADD COLUMN $columnCreated TEXT DEFAULT "${DateTime.now().toIso8601String()}"',
+      );
+      await db.execute(
+        'ALTER TABLE $tableName ADD COLUMN $columnLastModified TEXT DEFAULT "${DateTime.now().toIso8601String()}"',
+      );
+      await db.execute(
+        'ALTER TABLE $tableName ADD COLUMN $columnSequence INTEGER DEFAULT 0',
       );
     }
   }
@@ -65,6 +83,9 @@ class EventDatabase {
       columnEndTime: event.endTime.toIso8601String(),
       columnDescription: event.description,
       columnReminderMinutes: event.reminderMinutes,
+      columnCreated: event.created.toIso8601String(),
+      columnLastModified: event.lastModified.toIso8601String(),
+      columnSequence: event.sequence,
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
@@ -86,6 +107,13 @@ class EventDatabase {
         endTime: DateTime.parse(maps[i][columnEndTime] as String),
         description: maps[i][columnDescription] as String?,
         reminderMinutes: maps[i][columnReminderMinutes] as int?,
+        created: maps[i][columnCreated] != null
+            ? DateTime.parse(maps[i][columnCreated] as String)
+            : DateTime.now(),
+        lastModified: maps[i][columnLastModified] != null
+            ? DateTime.parse(maps[i][columnLastModified] as String)
+            : DateTime.now(),
+        sequence: maps[i][columnSequence] as int? ?? 0,
       );
     });
   }
@@ -111,6 +139,13 @@ class EventDatabase {
         endTime: DateTime.parse(maps[i][columnEndTime] as String),
         description: maps[i][columnDescription] as String?,
         reminderMinutes: maps[i][columnReminderMinutes] as int?,
+        created: maps[i][columnCreated] != null
+            ? DateTime.parse(maps[i][columnCreated] as String)
+            : DateTime.now(),
+        lastModified: maps[i][columnLastModified] != null
+            ? DateTime.parse(maps[i][columnLastModified] as String)
+            : DateTime.now(),
+        sequence: maps[i][columnSequence] as int? ?? 0,
       );
     });
   }
